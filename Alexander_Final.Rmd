@@ -1,0 +1,531 @@
+---
+title: "Final Project"
+author: "Rachel Alexander"
+date: "05/09/2020"
+output:
+  pdf_document:
+    toc: yes
+  html_document:
+    theme: readthedown
+    toc: yes
+    toc_collapsed: yes
+    toc_float: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(error = TRUE)
+```
+
+## Question
+**What variables, recorded at the scene of the stop, are most useful in predicting which drivers will be searched by police?** 
+
+### Introduction
+For this project, I will analyze a public dataset of police stops at traffic lights in Charlotte, North Carolina in August, 2017. My question aims to find out if recorded variables such as reason for stop, driver sex, driver race, or driver ethnicity, can allow us to predict, with suitable accuracy, whether or not a police officer will search a driver's car. I hypothesize that the prevalence of racial profiling will be so evident in the data set, that variables relating to the driver's profile, i.e sex, and race, will follow a similar pattern for each positive search observation, and thus allow the Random Forest model to accurately classify current search labels and predict for future searches.
+
+Given that Random Forests handle unbalanced data by minimizing the error rate of the larger class and over-sampling the minority class, this model best suits my data, which has extremely few occurances of the positive target class.
+
+### Background Research 
+Racial profiling is when law enforement officials suspect and target private individuals as criminals on the basis of race or ethnicity (ACLU, 2020). In an effort to uncover police bias and increase transparency, many cities and states have passed laws which require police to publicly release data tracking police stops at traffic lights.
+
+The Stanford Open Policing Project reviewed released data from 21 states, collected from 2011-2017. Researchers were led to believe that the black and Latino drivers are more likely to be searched despite limited evidence of contraband. While in reality, contraband was found in 36% of searches of white drivers, 32% of searches of black drivers, and 26% of searches of Latino drivers (Ortiz, 2019).
+
+A notable study conducted by researchers at UNC-Chapel Hill in 2017, found that blacks about twice as likely whites to be pulled over by police, and once they're pulled over, are twice as likely to be searched. The study from UNC-Chapel Hill used data containing approximately 20 million observations of police stops in North Carolina since 2002, amounting to what professor Frank Baumgartner calls a "'census of every traffic stop,'" (Misra, 2018). This census revealed that not only are blacks 95% more likely than whites after accounting for the representation in the population and their likelihood to be behind the wheel, they also are 115% more likely to be searched (Cambridge University Press, 2018). 
+
+For my project, I will use a sample data set provided by this study published by UNC-Chapel Hill.
+
+The UNC-Chapel Hill study concludes that using motor vehicle codes for criminal investigation, which is the motive behind many traffic pull-overs and searches, is racially biased and harmful to community trust (Cambridge University Press, 2018). It is a form of predictive policing which author Cathy O'Neil warns against in *Weapons of Math Destruction*, for it punishes traffic violations as a means for policing other nuisance crimes, such as drug posession or vagrancy. Tracking nuisance crimes creates a "pernicious feedback loop," one which in turn justifies more policing (O'Neil, 86). If my prediction is correct and race is the strongest predictor of police searches, it will be clear that Charlotte police must reform their traffic light pull-over practice in order to mitigate the harmful consequences of racial profiling.
+
+## Dataset Citation
+Baumgartner, Frank  R, et al. “OfficerEffects-ReplicationFiles.” Cambridge University Press, 2018.
+
+## Exploratory Data Analysis 
+```{r, eval=TRUE, echo=TRUE}
+# Install packages 
+install.packages("ggplot2", repos = "http://cran.us.r-project.org")
+library(ggplot2)
+install.packages("dplyr", repos = "http://cran.us.r-project.org")
+library(dplyr)
+install.packages("randomForest", repos = "http://cran.us.r-project.org")
+library(randomForest)
+install.packages("plotly", repos = "http://cran.us.r-project.org")
+library(plotly)
+install.packages("caret", repos = "http://cran.us.r-project.org")
+library(caret)
+install.packages("e1071", repos = "http://cran.us.r-project.org")
+library(e1071)
+install.packages("ROCR", repos = "http://cran.us.r-project.org")     
+library(ROCR)
+```
+
+```{r, echo=TRUE}
+# Load data
+NC_stops <- read.csv("Officer_Traffic_Stops.csv", check.names = TRUE, stringsAsFactors = TRUE)
+```
+
+### Base Rate
+```{r, eval=TRUE, echo=TRUE}
+# Base Rate
+table(NC_stops$`Was_a_Search_Conducted`)
+
+table(NC_stops$`Was_a_Search_Conducted`)[1] / sum(table(NC_stops$`Was_a_Search_Conducted`))
+table(NC_stops$`Was_a_Search_Conducted`)[2] / sum(table(NC_stops$`Was_a_Search_Conducted`))
+```
+Base Rate: 4/96. Searches are only conducted in 4% of the sample. This may make it difficult for a model to identify positive observations accurately.
+
+### Breaking down the variables
+The variables viewed here are ones which I predict will significantly impact the model's ability to identify the positive target class. Driver_Race, Driver_Ethnicity, and Driver_Gender, are demographic factors which I believe will influence an officer's decision to search someone, based on above discussion of racial profiling. CMPD_Division is also viewed on the possibility that police division, based on locality, will reflect the occurance of minority individuals, as minority communities are often clustered together. Reason_for_Stop is also viewed based on the logical prediction that the more severe the reason for stop, the greater the likelihood the individual is searched. 
+
+```{r, eval=TRUE, echo=TRUE}
+library(ggplot2)
+# Count the total number of observations for each level of Driver_Race
+race_count <- count(NC_stops, Driver_Race) 
+
+bar_race <- ggplot(data = race_count, aes(x = reorder(Driver_Race, -n), y = n, fill = Driver_Race)) +
+                  geom_bar(stat = "identity") +
+                  labs(y = "Number of Persons Stopped", x = "Driver Race") +
+                  scale_fill_discrete(name="Driver Race") +
+                  ggtitle("Observed Race of Persons Stopped by Charlotte Police") +
+                  theme_minimal() +
+                  theme(axis.text.x.bottom = element_blank()) +
+                  theme(legend.position = "top")
+bar_race
+```
+Clearly, black drivers are stoped the most frequently. This seems to support my prediction that demographic features of the driver will affect whether or not he or she will be searched.
+
+```{r, eval=TRUE, echo=TRUE}
+library(ggplot2)
+# Count the total number of observations for each level of Driver_Ethnicity
+ethnicity_count <- count(NC_stops, Driver_Ethnicity) 
+
+bar_ethnicity <- ggplot(data = ethnicity_count, aes(x = reorder(Driver_Ethnicity, -n), y = n, fill = Driver_Ethnicity)) +
+                  geom_bar(stat = "identity") +
+                  labs(y = "Number of Persons Stopped", x = "Driver Ethnicity") +
+                  scale_fill_discrete(name="Driver Ethnicity") +
+                  ggtitle("Observed Ethnicity of Persons Stopped by Charlotte Police") +
+                  theme_minimal() +
+                  theme(axis.text.x.bottom = element_blank()) +
+                  theme(legend.position = "top")
+bar_ethnicity
+```
+
+```{r, eval=TRUE, echo=TRUE}
+library(ggplot2)
+# Count the total number of observations for each level of Driver_Gender
+gender_count <- count(NC_stops, Driver_Gender) 
+
+bar_gender <- ggplot(data = gender_count, aes(x = reorder(Driver_Gender, -n), y = n, fill = Driver_Gender)) +
+                  geom_bar(stat = "identity") +
+                  labs(y = "Number of Persons Stopped", x = "Driver Gender") +
+                  scale_fill_discrete(name="Driver Gender") +
+                  ggtitle("Observed Gender of Persons Stopped by Charlotte Police") +
+                  theme_minimal() +
+                  theme(axis.text.x.bottom = element_blank()) +
+                  theme(legend.position = "top")
+bar_gender
+```
+
+```{r, eval=TRUE, echo=TRUE}
+library(ggplot2)
+# Count the total number of observations for each level of Reasons_for_Stop
+reason_for_stop_count <- count(NC_stops, Reason_for_Stop) 
+
+bar_reason_stop <- ggplot(data = reason_for_stop_count, aes(x = reorder(Reason_for_Stop, -n), y = n, fill = Reason_for_Stop)) +
+                  geom_bar(stat = "identity") +
+                  labs(y = "Number of Persons Stopped", x = "Reasons for Stop") +
+                  scale_fill_discrete(name="Reasons for Stop") +
+                  ggtitle("Reasons for Stop by Charlotte Police") +
+                  theme_minimal() +
+                  theme(axis.text.x.bottom = element_blank()) +
+                  theme(legend.position = "top")
+bar_reason_stop
+```
+
+```{r, eval=TRUE, echo=TRUE}
+library(ggplot2)
+# Count the total number of observations for each level of CMPD_Division
+division_count <- count(NC_stops, CMPD_Division) 
+
+bar_division <- ggplot(data = division_count, aes(x = reorder(CMPD_Division, -n), y = n, fill = CMPD_Division)) +
+                  geom_bar(stat = "identity") +
+                  labs(y = "Number of Persons Stopped", x = "CMPD Division") +
+                  scale_fill_discrete(name="CMPD Division") +
+                  ggtitle("Number of Stops in Police Divisions of Charlotte, NC") +
+                  theme_minimal() +
+                  theme(axis.text.x.bottom = element_blank()) +
+                  theme(legend.position = "top")
+bar_division
+```
+
+## Method: *Random Forest Model*
+### Prepare Data for Model
+#### Remove Repetive Variables
+```{r, eval=TRUE, echo=TRUE}
+# Remove repetitive variables
+NC_stops_new <- NC_stops[,-c(1, 9, 13, 14, 15, 16, 17)] # Explain why remove OBJECT_ID and Driver_Ages
+```
+Most of the variables removed, such as Month_of_Stop, CreationDate, Creator, EditDate, and Editor, are all factors with 1 level, and can be assumed to have no affect on the model. 
+Driver_Ages was eliminated because factors with more than 53 levels cannot be handled by the Random Forest model.
+Object_ID was removed; it is a unique label assigned to each stopped person for purposes of police records, and thus will be of no use in identifying positive search cases. 
+
+#### Create Dummy Variables
+*PLEASE NOTE: After recently updating to R 4.0, for some reason the apply function coerced every type to a character instead of a factor. I could not figure out why, so I have changed each variable manually, without using apply.*
+```{r, eval=TRUE, echo=TRUE}
+# Coerce all factor variables to numeric values, or dummy variables. Classify binary variables as 0s and 1s
+
+# Target variable
+# Classify the target variable of "Was_a_Search_Conducted" 0 for negative and 1 for positive 
+NC_stops_new$Was_a_Search_Conducted <- as.numeric(NC_stops_new$Was_a_Search_Conducted)
+
+NC_stops_new$Was_a_Search_Conducted[NC_stops_new$Was_a_Search_Conducted == 1] <- 0 
+NC_stops_new$Was_a_Search_Conducted[NC_stops_new$Was_a_Search_Conducted == 2] <- 1
+
+# Predictor variables
+NC_stops_new$Reason_for_Stop <- as.numeric(NC_stops_new$Reason_for_Stop)
+
+NC_stops_new$Officer_Race <- as.numeric(NC_stops_new$Officer_Race)
+
+NC_stops_new$Officer_Gender <- as.numeric(NC_stops_new$Officer_Gender)
+  NC_stops_new$Officer_Gender[NC_stops_new$Officer_Gender == 1] <- 0 
+  NC_stops_new$Officer_Gender[NC_stops_new$Officer_Gender == 2] <- 1 # Classify male as 1 to target male class
+  
+NC_stops_new$Driver_Race <- as.numeric(NC_stops_new$Driver_Race)
+
+NC_stops_new$Driver_Ethnicity <- as.numeric(NC_stops_new$Driver_Ethnicity)
+  NC_stops_new$Driver_Ethnicity[NC_stops_new$Driver_Ethnicity == 2] <- 0 # Classify non-Hispanic as 0
+
+NC_stops_new$Driver_Gender <- as.numeric(NC_stops_new$Driver_Gender)
+  NC_stops_new$Driver_Gender[NC_stops_new$Driver_Gender == 1] <- 0 
+  NC_stops_new$Driver_Gender[NC_stops_new$Driver_Gender == 2] <- 1 # Classify male as 1 to target male class
+
+NC_stops_new$Result_of_Stop <- as.numeric(NC_stops_new$Result_of_Stop)
+
+NC_stops_new$CMPD_Division <- as.numeric(NC_stops_new$CMPD_Division)
+```
+
+#### Create a Composite Metric and Rebalance the Dataset
+This actions are necessary given to address the limited scale of the data set. The composite metric, which represents the interaction between demographic data points on each stopped individual, will increase the affect of individual gender, race, and ethnicity variables on the model. Additionally, splitting the data so that the positive target is represented in 30% of the sample directly solves the problem of the extremely skewed base rate. 
+```{r, eval=TRUE, echo=TRUE}
+# Composite metric: Race + Ethnicity
+# Rebalance Data to 70/30 split 
+library(dplyr)
+NC_stops_final <- mutate(NC_stops_new, REG_Score = as.factor(Driver_Gender + Driver_Race + Driver_Ethnicity)) %>%
+                      arrange(desc(Was_a_Search_Conducted)) %>% # Reblance data for 70/30 split of the target class
+                      slice(1:12900) #Split calculated using general information about the data 
+
+```
+
+### Default Model
+#### Create Train and Test Set
+```{r, eval=TRUE, echo=TRUE}
+# Coerce every variable to a factor
+# PLEASE NOTE: Same problem with apply function as mentioned above. 
+NC_stops_final$Reason_for_Stop <- as.factor(NC_stops_final$Reason_for_Stop)
+NC_stops_final$Officer_Race <- as.factor(NC_stops_final$Officer_Race)
+NC_stops_final$Officer_Gender <- as.factor(NC_stops_final$Officer_Gender)
+NC_stops_final$Officer_Years_of_Service <- as.factor(NC_stops_final$Officer_Years_of_Service)
+NC_stops_final$Driver_Race <- as.factor(NC_stops_final$Driver_Race)
+NC_stops_final$Driver_Ethnicity <- as.factor(NC_stops_final$Driver_Ethnicity)
+NC_stops_final$Driver_Gender <- as.factor(NC_stops_final$Driver_Gender)
+NC_stops_final$Was_a_Search_Conducted <- as.factor(NC_stops_final$Was_a_Search_Conducted)
+NC_stops_final$Result_of_Stop <- as.factor(NC_stops_final$Result_of_Stop)
+NC_stops_final$CMPD_Division <- as.factor(NC_stops_final$CMPD_Division)
+
+sample_rows = 1:nrow(NC_stops_final)
+```
+
+```{r, eval=TRUE, echo=TRUE}
+# PLEASE NOTE: Due to aforementioned problem, I am repeating code seen above in order to create a version of NC_stops_final with only numeric vectors to pass into the sample function.
+NC_stops_final_num <- mutate(NC_stops_new, REG_Score = Driver_Gender + Driver_Race + Driver_Ethnicity) %>%
+                      arrange(desc(Was_a_Search_Conducted)) %>% 
+                      slice(1:12900)
+
+# Training index
+set.seed(1) 
+test_rows = sample(sample_rows,
+                   dim(NC_stops_final_num)[1]*.10, 
+                   replace = FALSE)
+str(test_rows)
+```
+
+```{r, eval=TRUE, echo=TRUE}
+# Train set and Test set
+NC_train = NC_stops_final[-test_rows,]
+NC_test = NC_stops_final[test_rows,]
+
+str(NC_train)
+str(NC_test)
+```
+
+#### Random Forest 1
+```{r, eval=TRUE, echo=TRUE}
+# Build a random forest
+library(randomForest)
+
+set.seed(1)	
+NC_stops_RF = randomForest(Was_a_Search_Conducted~.,        
+                            NC_train,     
+                            ntree = 800,         # Number of trees to grow. 
+                            mtry = 4,            # Default number for regression is (# of variables / 3).
+                            replace = TRUE,      # Replace sample data points
+                            sampsize = 100,      # Size of sample to draw each time.
+                            nodesize = 5,        # Minimum numbers of data points in terminal nodes.
+                            importance = TRUE,   # Assess importance of predictors
+                            proximity = TRUE,    # Calculate proximity measure
+                            norm.votes = TRUE,   # If TRUE (default), the final result of votes are expressed as fractions. If FALSE, raw vote counts are returned (useful for combining results from different runs).
+                            do.trace = TRUE,     # If set to TRUE, give a more verbose output as randomForest is run.
+                            keep.forest = TRUE,  # If set to FALSE, the forest will not be retained in the output object. If xtest is given, defaults to FALSE.
+                            keep.inbag = TRUE)   # Should an n by ntree matrix be returned that keeps track of which samples are in-bag in which trees? 
+NC_stops_RF
+```
+
+```{r, eval=TRUE, echo=TRUE}
+# Calculate Accuracy
+NC_RF_acc <- sum(NC_stops_RF$confusion[row(NC_stops_RF$confusion) == 
+                                                col(NC_stops_RF$confusion)]) / 
+  sum(NC_stops_RF$confusion)
+
+NC_RF_acc
+```
+* Accuracy: 79.35%
+
+```{r, eval=TRUE, echo=TRUE}
+# Calculate error rate
+err.rate <- as.data.frame(NC_stops_RF$err.rate)
+
+# The "oob.times" argument includes the number of times that each data point is not excluded from trees in the random forest.
+View(as.data.frame(NC_stops_RF$oob.times))
+
+NC_RF_error <- data.frame(1:nrow(NC_stops_RF$err.rate),
+                                NC_stops_RF$err.rate)
+
+colnames(NC_RF_error) = c("Number of Trees", "Out of the Box",
+                                 "Not Searched", "Searched")
+
+# Add another variable that measures the difference between the error rates
+NC_RF_error$Diff <- NC_RF_error$Searched-NC_RF_error$`Not Searched`
+View(NC_RF_error)
+```
+
+```{r, eval=TRUE, echo=TRUE}
+# Visualize results
+library(plotly)
+
+rm(fig)
+fig <- plot_ly(x=NC_RF_error$`Number of Trees`, y=NC_RF_error$Diff,name="Diff", type = 'scatter', mode = 'lines')
+fig <- fig %>% add_trace(y=NC_RF_error$`Out of the Box`, name="OOB_Er")
+fig <- fig %>% add_trace(y=NC_RF_error$`Not Searched`, name="Not Searched")
+fig <- fig %>% add_trace(y=NC_RF_error$Searched, name="Searched")
+
+fig
+```
+
+### Optimize Model
+#### Random Forest 2
+```{r, eval=TRUE, echo=TRUE}
+# Optimize model
+# To be as accurate as possible when predicting the positive class, choose the number of trees which minimizes Diff and Searched
+set.seed(1)	
+NC_stops_RF2 = randomForest(Was_a_Search_Conducted~.,        
+                            NC_train,     
+                            ntree = 89,
+                            mtry = 4,
+                            replace = TRUE,
+                            sampsize = 100,
+                            nodesize = 5,
+                            importance = TRUE,
+                            proximity = TRUE,
+                            norm.votes = TRUE,
+                            do.trace = TRUE,
+                            keep.forest = TRUE,
+                            keep.inbag = TRUE)
+
+NC_stops_RF2
+```
+
+```{r, eval=TRUE, echo=TRUE}
+# Compare the models
+NC_stops_RF$confusion
+NC_stops_RF2$confusion
+```
+The second model, NC_stops_RF2, best identifies the positive class, as it correctly picks out 191 more people who were searched by police than the first model did.
+
+```{r, eval=TRUE, echo=TRUE}
+# Generate predictions with the model 
+NC_predict = predict(NC_stops_RF2,      #  a randomForest model
+                            NC_test,      # the test data set to use
+                            type = "response",
+                            predict.all = TRUE,
+                            proximity = TRUE)
+
+# Create a summary data frame, basically adding the prediction to the test set. 
+NC_stops_pred = data.frame(NC_test, Prediction = NC_predict$predicted$aggregate)
+View(NC_stops_pred)
+
+```
+
+```{r, eval=TRUE, echo=TRUE}
+# Confusion Matrix
+library(caret)
+confusionMatrix(NC_stops_pred$Prediction,NC_stops_pred$Was_a_Search_Conducted,positive = "1", dnn=c("Prediction", "Actual"), mode = "sens_spec")
+```
+* Accuracy, 89 trees: 79.3%
+** Overall accuracy about the same as first model 
+
+```{r, eval=TRUE, echo=TRUE}
+# Visualize variable importance
+library(randomForest)
+varImpPlot(NC_stops_RF2,     # a randomForest model
+           sort = TRUE,        # Sort variables by decreasing order of importance
+           n.var = 10,        #<- number of variables to display
+           main = "Important Factors for Identifying Persons Searched by Charlotte Police",
+           bg = "white",
+           color = "blue",
+           lcolor = "orange")
+```
+According the Mean_Decrease_Gini graph, if Officer's Years of Service, CMPD Division, and Result of Stop are not included, the model's ability to predict who will be searched will be significantly reduced.
+
+```{r, eval=TRUE, echo=TRUE}
+# Visualize tree size
+hist(treesize(NC_stops_RF2,
+              terminal = FALSE), main="Tree Size") 
+```
+Most of the 89 trees built by this model include between 30 and 35 nodes
+
+```{r, eval=TRUE, echo=TRUE}
+# Tune the Tree
+# Tune number of variables to be included
+set.seed(2)
+NC_RF_mtry = tuneRF(data.frame(NC_train[ ,c(1,2,3,4,5,6,7,9,10,11)]),  #<- data frame of predictor variables
+                           as.factor(NC_train[ ,8]),     #<- response vector (variables), factors for classification and continuous variable for regression
+                           mtryStart = 4,                        #<- starting value of mtry, the default is the same as in the randomForest function
+                           ntreeTry = 89,                        #<- number of trees used at the tuning step, let's use the same number as we did for the random forest
+                           stepFactor = 2,                       #<- at each iteration, mtry is inflated (or deflated) by this value
+                           improve = 0.05,                       #<- the improvement in OOB error must be by this much for the search to continue
+                           trace = TRUE,                         #<- whether to print the progress of the search
+                           plot = TRUE,                         #<- whether top plot the OOB error as a function of mtry
+                           doBest = FALSE)                       #<- whether to create a random forest using the optimal mtry parameter
+NC_RF_mtry
+```
+4 variables should be included in each node in order to minimize the out of bag error. 
+
+### ROC and AUC 
+For RF2
+```{r, eval=TRUE, echo=TRUE}
+# Create a prediction object for the ROC curve.
+View(as.data.frame(NC_stops_RF2$votes))
+
+# The "1" column tells us what percent of the trees voted for that data point as "searched"
+# Convert this data set into a data frame with numbers 
+NC_stops_RF2_prediction = as.data.frame(as.numeric(as.character(NC_stops_RF2$votes[,2])))
+View(NC_stops_RF2_prediction)
+
+# Take the actual classification of each data point and convert it to a data frame with numbers 
+NC_train_actual = data.frame(as.factor(NC_train[,8]))
+View(NC_train_actual)
+```
+
+```{r, eval=TRUE, echo=TRUE}
+# Standardized format for true positives and false positives using prediction function
+library(ROCR)
+NC_prediction_comparison <- prediction(NC_stops_RF2_prediction,
+                                             NC_train_actual)
+View(NC_prediction_comparison)
+
+# Create performance object
+NC_pred_performance = performance(NC_prediction_comparison, 
+                                         measure = "tpr",    #<- performance measure to use for the evaluation
+                                         x.measure = "fpr")  #<- 2nd performance measure to use for the evaluation
+View(NC_pred_performance)
+```
+
+```{r, eval=TRUE, echo=TRUE}
+# Calculate the true positive and false positive rates for the classification.
+NC_stop_rates <- data.frame(fp = NC_prediction_comparison@fp,  #<- false positive classification.
+                             tp = NC_prediction_comparison@tp,  #<- true positive classification.
+                             tn = NC_prediction_comparison@tn,  #<- true negative classification.
+                             fn = NC_prediction_comparison@fn)  #<- false negative classification.
+
+colnames(NC_stop_rates) = c("fp", "tp", "tn", "fn")
+str(NC_stop_rates)
+tpr = NC_stop_rates$tp / (NC_stop_rates$tp + NC_stop_rates$fn)
+fpr = NC_stop_rates$fp / (NC_stop_rates$fp + NC_stop_rates$tn)
+```
+
+```{r, eval=TRUE, echo=TRUE}
+# Compare the values with the output of the performance() function
+NC_rates_comparison <- data.frame(NC_pred_performance@x.values,
+                                        NC_pred_performance@y.values,
+                                        fpr,
+                                        tpr)
+colnames(NC_rates_comparison) = c("x.values","y.values","fpr","tpr") 
+
+View(NC_rates_comparison)
+```
+
+```{r, eval=TRUE, echo=TRUE}
+# Plot the ROC Curve
+plot(NC_pred_performance, 
+     col = "blue", 
+     lwd = 3, 
+     main = "ROC curve")
+grid(col = "black")
+
+# Add a 45 degree line.
+abline(a = 0, 
+       b = 1,
+       lwd = 2,
+       lty = 2,
+       col = "gray")
+
+# Calculate the AUC
+NC_auc_RF = performance(NC_prediction_comparison, 
+                               "auc")@y.values[[1]]
+NC_auc_RF
+
+# Add the AUC value to the ROC plot.
+text(x = 0.5, 
+     y = 0.5, 
+     labels = paste0("AUC = ", 
+                     round(NC_auc_RF, 2)))
+```
+AUC = 0.83
+
+## Conclusion
+According to the model, an Officer's Years of Service, CMPD Division where stop occured, and Result of Stop best predict who will be searched. My predictions remain unproved; the variables concerning demographics of the driver had little affect on the model, with Driver Ethnicity, having the smallest affect overall. 
+
+Yet, while the Random Forest model can predict the positive target class to approximately 80% accuracy and minimal error, its results cannot really be applied to the model due to extreme over-fitting: the nature of the random forest model, which increases the error of the smaller class, and my 70/30 split of the target variable, both oversampled the minority of positive search observations. And even with overfitting, overall volatility in the error measures could not be definitively stabalized with 800 trees. That isn't to say that creating more than the optimal 89 trees would greatly affect the results of the model, but goes to show that the model had difficulty settling on which features to use in order to make decisions.
+
+Additionally, thinking further on the top three most important variables, it seams that Result_of_Stop would closely mirror the target variable. For example, it seems more likely that persons arrested as a result of stop would be searched compared to persons who just recieved a verbal warning. Additionally, given that Officer's Years of Service has the greatest number of levels, it is easy to see how the model would take advantage of that variability in order to coerce it into being a strong predictor. 
+
+Ultimately, while the model is able to reliably predict the positive class and has strong AUC score of 0.83, we cannot conclude that the variables themselves have predictive power. This is confirmed by a correlation matrix on the data, see below:
+
+```{r, eval=TRUE, echo=TRUE}
+# Determine correlations
+stop_correlations <- cor(NC_stops_final_num[, -c(9)])
+stop_correlations
+```
+
+Outside of my composite metric, the variables are barely correlated to one another at all. This indicates that the variables do not have much predictive power, their occurances are too random for the model's output to be trusted. *Thus, we can conclude that none of the provided variables will allow us to predict which drivers will be searched by Charlotte police.* This finding is supported by reports from the Stanford Open Policing Project, which notes that while nation-wide success rates of searches, or hit rates, reveal discrimination against Hispanic drivers, black search hit rates are approximately equal to white search hit rates. This seems to indicate an absence of discrimination between the two groups (Stanford, 2020).  
+
+## Future work
+My analysis was ultimately limited by my decision to oversample the positive target class. In an effort to overcome the unbalanced base rate, I reduced the size of the orginal data set to ensure a 70/30 split of the target class. For this reason, my sample is not representative of the population, and thus the conclusions my model generates are not as trustworthy. 
+
+For further study, I could change the target variable to black or white searches, and train the model to predict whether or not a black person could be searched. This method would eliminate my oversampling problem entirely and clearly reveal whether or not race impacts an officer's decision to search someone. 
+
+## Sources
+Baumgartner, Frank  R, et al. “Suspect Citizens: What 20 Million Traffic Stops Tells Us About Policing and Race.” Cambridge University Press, 2018.
+
+Misra, Tanvi. “Why Are Whites More Likely to Get Tickets When Stopped?” CityLab, 6 June 2018, www.citylab.com/life/2018/06/is-it-time-to-reconsider-traffic-stops/561557/.
+
+O'Neil, Cathy. Weapons of Math Destruction: How Big Data Increases Inequality and Threatens Democracy. Penguin Books, 2018.
+
+Ortiz, Erik. “Inside 100 Million Police Traffic Stops: New Evidence of Racial Bias.” NBCNews.com, NBCUniversal News Group, 17 Mar. 2019, www.nbcnews.com/news/us-news/inside-100-million-police-traffic-stops-new-evidence-racial-bias-n980556.
+
+“Racial Profiling: Definition.” American Civil Liberties Union, www.aclu.org/other/racial-profiling-definition.
+
+“The Stanford Open Policing Project.” Openpolicing.stanford.edu, openpolicing.stanford.edu/findings/.
+
+```{r}
+library("rmarkdown")
+render("/Users/rachelalexander/Desktop/R Studio Projects/DS4001/Alexander_Final.Rmd")
+```
